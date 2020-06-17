@@ -36,8 +36,8 @@ type eventSearchRequest struct {
 // NewEventSearchEncoded create a []byte json encoded for doing a search request
 func NewEventSearchEncoded(s, end time.Time, size, next int, t EventType) ([]byte, error) {
 	//needed because Symantec endpoints gives random errors when using now.
-	s = s.Add(-1 * 10 * time.Second)
-	end = end.Add(-1 * 10 * time.Second)
+	s = s.Add(-1 * 30 * time.Second)
+	end = end.Add(-1 * 30 * time.Second)
 	event := eventSearchRequest{
 		StartDate:  s.UTC().Format(timeFormatSearch),
 		EndDate:    end.UTC().Format(timeFormatSearch),
