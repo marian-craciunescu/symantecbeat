@@ -19,6 +19,7 @@ package beater
 
 import (
 	"fmt"
+	"github.com/marian-craciunescu/symantecbeat/ecs"
 	"time"
 
 	"github.com/marian-craciunescu/symantecbeat/client"
@@ -46,7 +47,11 @@ func New(b *beat.Beat, cfg *common.Config) (beat.Beater, error) {
 		return nil, fmt.Errorf("Error reading config file: %v", err)
 	}
 	logp.Info("using config %v", c)
-	sm := client.NewSymantecClient(c.ApiURL, c.CustomerID, c.DomainID, c.ClientID, c.ClientSecret)
+	ecsMapper, err := ecs.NewMapper(c.EcsFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("Error reading ecs csv mapping file: %v", err)
+	}
+	sm := client.NewSymantecClient(c.CustomerID, c.DomainID, c.ClientID, c.ClientSecret, ecsMapper)
 
 	bt := &Symantecbeat{
 		done:     make(chan struct{}),
@@ -82,28 +87,48 @@ func (bt *Symantecbeat) Run(b *beat.Beat) error {
 				}
 
 				end := time.Now().UTC()
-				for eventType := range client.AllTypes {
-					t := client.EventType(eventType)
-					mapStrArr, err := bt.smClient.DoRequest(bt.lastRun, end, t, bt.config.BatchSize)
-					if err != nil {
-						logp.Err("Error while doing request.Err=%s", err.Error())
+				logp.Info("Getting all event ticker cycle lastRun=%s end=%s", bt.lastRun.Format(time.RFC3339), end.Format(time.RFC3339))
+				if bt.config.QueryType == 0 {
+					bt.retrieveExportEvents(end)
+				} else {
+					mapStrArr, err := bt.smClient.DoRetrieveSearchEvents(bt.lastRun, end, bt.config.BatchSize)
+					if err == nil {
+						bt.publishEvents(err, mapStrArr)
 					} else {
-						for _, mapStr := range mapStrArr {
-							ts := time.Now()
-							if err == nil {
-								event := beat.Event{
-									Timestamp: ts,
-									Fields:    mapStr,
-								}
-								bt.client.Publish(event)
-							}
-
-						}
-
+						logp.Info("Error retrieving search event")
+						end = bt.lastRun
 					}
+
 				}
 				bt.lastRun = end
+				logp.Info("End ticker cycle lastRun=%s", bt.lastRun.Format(time.RFC3339))
 			}
+
+		}
+
+	}
+}
+
+func (bt *Symantecbeat) retrieveExportEvents(end time.Time) {
+	for eventType := range client.AllTypes {
+		t := client.EventType(eventType)
+		mapStrArr, err := bt.smClient.DoExportRequest(bt.lastRun, end, t, bt.config.BatchSize)
+		bt.publishEvents(err, mapStrArr)
+	}
+}
+
+func (bt *Symantecbeat) publishEvents(err error, mapStrArr []common.MapStr) {
+	if err != nil {
+		logp.Err("Error while doing request.Err=%s", err.Error())
+	} else {
+		for _, mapStr := range mapStrArr {
+			ts := time.Now()
+
+			event := beat.Event{
+				Timestamp: ts,
+				Fields:    mapStr,
+			}
+			bt.client.Publish(event)
 
 		}
 
